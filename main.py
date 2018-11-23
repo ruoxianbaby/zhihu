@@ -7,61 +7,79 @@ import sys
 import urllib.request
 import requests
 import json
-import time
 from bs4 import BeautifulSoup
-import redis
+import Proxy
+import RedisManagerPeople
 
-class main(Base.Base):
+class main(Base.Base, Proxy.Proxy, RedisManagerPeople.RedisManagerPeople):
     people_profile = "https://www.zhihu.com/people/"
+    
     def __init__(self):
         Base.Base.__init__(self)
-        
+        RedisManagerPeople.RedisManagerPeople.__init__(self)
+
+
     def run(self):
-        self.get_user_info()
+        self.get_zhihu_user_info()
     
-    def get_user_info(self):
-        url = self.people_profile + self.get_people()
-        context = self._request(url)
-        self.analysis(context)
+    def get_zhihu_user_info(self):
+        self.people = self.get_people()
+        url = self.people_profile + self.people
+        context = None
+        while not context:
+            context = self._request(url)
+        result = self.analysis(context)
+        print(result)
 
     def _request(self, url):
-        result = urllib.request.urlopen(url)
-        return result
+        head = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36', 'Connection': 'keep-alive'}
+        proxy = self.get_proxy() 
+        try:
+            result = requests.get(url, headers = head, proxies={"http": "http://{}".format(proxy)}, timeout = 8).text
+            return result
+        except:
+            self.delete_proxy(proxy)
+            return None
+        
     
     # 分析格式化得到的html
     def analysis(self, context):
-        print(context)
-        soup = BeautifulSoup(context, "html.parser", from_encoding="utf-8")
+        soup = BeautifulSoup(context, "html.parser")
+        self.soup = soup
+        self.base_info = json.loads(soup.find(id = "js-initialData").get_text())
         self.get_followers(soup)
-        info = self.format_info(soup)
+        info = self.format_info()
         return info
     
-    def format_info(self, soup):
+    def format_info(self):
         info = {}
-        info['name'] = soup.find(attrs={"class": "ProfileHeader-name"}).get_text()
+        user_info = self.base_info['initialState']['entities']['users'][self.people]
+        info = {
+            "name": user_info['name'],
+            "following_num": user_info['followingCount'],
+            "follows_num": user_info['followerCount'],
+            "url_token": self.people,
+            "gender": user_info['gender'],
+            "header_img": user_info['avatarUrl'],
+            "create_time": self.datetime(),
+            "industry": user_info['business']['name'],
+            "headline": user_info['headline'],
+            "Intro": user_info['description'],
+            "bg_img": user_info['avatarUrlTemplate'],
+            "answer_num": user_info['answerCount'],
+            "question_num": user_info['questionCount'],
+            "be_star": user_info['voteupCount'],
+            "education": user_info['educations'][0]['school']['name'],
+            "company": user_info["employments"][0]['company']['name'],
+            "job": user_info["employments"][0]['job']['name'],
+            "location": user_info['locations'][0]['name']
+        }
         return info
     
     def get_followers(self, soup):
-        data = soup.find(id = "js-initialData").get_text()
-        print(data)
-
-    def add_done_people(self, people):
-        return self.redis.sadd('done_people', people)
+        pass
+        # print(json.loads(data))
     
-    # 从redis集合里随机抛出一个用户
-    def get_people(self):
-        people = self.redis.spop("people")
-        if people:
-            return str(people, encoding='utf-8')
-        else:
-            sys.exit()
-
-    def add_people(self, people):
-        return self.redis.sadd("people", people)
-    
-    def check_people_exists(self, people):
-        return self.redis.sismember("done_people", people)
-
     def __del__(self):
         print("programe exit")
 
